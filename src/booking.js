@@ -1,4 +1,4 @@
-import { withTransaction } from './db.js';
+import { isDuplicateKey, withTransaction } from './db.js';
 import { allocateNumber, rangeStatus } from './ranges.js';
 import { buildBookingPayload } from './tpc/payload.js';
 
@@ -47,20 +47,27 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
     return next;
   }
 
+  // MySQL returns JSON columns parsed; MariaDB returns them as text.
+  function normalise(row) {
+    if (row && typeof row.payload === 'string') row.payload = JSON.parse(row.payload);
+    return row ?? null;
+  }
+
   async function liveRow(orderId) {
     const { rows } = await pool.query(
-      `SELECT * FROM consignments WHERE order_id = $1 AND status <> 'burned'`, [orderId]);
-    return rows[0] ?? null;
+      `SELECT * FROM consignments WHERE order_id = ? AND status <> 'burned'`, [orderId]);
+    return normalise(rows[0]);
   }
 
   async function updateRow(number, fields) {
     const keys = Object.keys(fields);
-    const sets = keys.map((k, i) => `${k} = $${i + 2}`);
-    const { rows } = await pool.query(
-      `UPDATE consignments SET ${sets.join(', ')}, updated_at = now() WHERE number = $1 RETURNING *`,
-      [number, ...keys.map((k) => fields[k])],
+    const values = keys.map((k) => (k === 'payload' && fields[k] !== null ? JSON.stringify(fields[k]) : fields[k]));
+    await pool.query(
+      `UPDATE consignments SET ${keys.map((k) => `${k} = ?`).join(', ')}, updated_at = NOW(3) WHERE number = ?`,
+      [...values, number],
     );
-    return rows[0];
+    const { rows } = await pool.query('SELECT * FROM consignments WHERE number = ?', [number]);
+    return normalise(rows[0]);
   }
 
   // Shopify updates are best effort: the database is the source of truth, and a
@@ -105,7 +112,7 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
       return row;
     } catch (error) {
       // Another delivery of the same webhook won the race for this order.
-      if (error.code === '23505') return liveRow(ref.id);
+      if (isDuplicateKey(error, 'consignments_one_live_per_order')) return liveRow(ref.id);
       throw error;
     }
   }
@@ -285,12 +292,12 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
   async function resendPending({ olderThanMs = 120_000 } = {}) {
     const { rows } = await pool.query(
       `SELECT * FROM consignments
-        WHERE status = 'reserved' AND updated_at < now() - make_interval(secs => $1)
+        WHERE status = 'reserved' AND updated_at <= NOW(3) - INTERVAL ? MICROSECOND
         ORDER BY updated_at`,
-      [olderThanMs / 1000],
+      [olderThanMs * 1000],
     );
     const results = [];
-    for (const stale of rows) {
+    for (const stale of rows.map(normalise)) {
       const ref = { id: stale.order_id, gid: stale.order_gid, name: stale.order_name };
       results.push(await withOrderLock(ref.id, async () => {
         const row = await liveRow(ref.id);

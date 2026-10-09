@@ -46,22 +46,55 @@ The client (store owner) creates an app at dev.shopify.com with their Shopify lo
 
 Copy the **Client ID** and **Client secret** from the app's Settings. The app gets its own access tokens with the client-credentials grant, so no token needs copying.
 
-### 2. Host
+### 2. Run it locally
 
-Any Node 20.12+ host with Postgres and a public HTTPS URL, such as Render (web service + Postgres) or Fly.io. Set the variables from `.env.example` in the host's environment settings, not in a committed file.
+Needs Node 20.12+ and MySQL 8 (or MariaDB 10.5+). On a Mac: `brew install mysql && brew services start mysql`.
 
 ```bash
 npm install
-npm start
+cp .env.example .env        # then fill in the values
+mysql -uroot -e "CREATE DATABASE tpc_courier"
+npm run range:add -- test 5001000001 5001000010 "TPC test numbers"
+npm run mock:tpc            # terminal 1: fake TPC API on :4010
+npm start                   # terminal 2: the app on :3000 (creates its tables on start)
 ```
 
-### 3. One-time store setup
+**Shopify webhooks need a public HTTPS address,** so while running locally, open a tunnel to port 3000 in a third terminal:
 
 ```bash
-npm run shopify:setup -- https://your-app-url.example.com
+cloudflared tunnel --url http://localhost:3000   # brew install cloudflared; prints an https://….trycloudflare.com address
+npm run shopify:setup -- https://<that-address>
 ```
 
-This subscribes the `orders/paid`, `orders/create` and `orders/updated` webhooks, and creates the two pinned order metafields staff see on the order page.
+The tunnel address changes every time cloudflared restarts, so re-run `shopify:setup` with the new one. The script removes subscriptions to the old address.
+
+### 3. Host on the Webuzo server
+
+1. **Database.** In Webuzo → Databases, create a database and a user, give the user all privileges on it, and note the host (usually `localhost`).
+2. **Domain and SSL.** Add a subdomain such as `tpc.yourdomain.com` and issue a Let's Encrypt certificate for it. Shopify only sends webhooks to HTTPS.
+3. **Upload the code** to a folder outside `public_html`, e.g. with `git clone` over SSH, or upload a zip without `node_modules` and `.env`. Then in that folder run:
+   ```bash
+   npm ci --omit=dev
+   ```
+4. **Create the Node.js app** in Webuzo's Application Manager:
+   - Node.js 20.12 or newer
+   - start file `src/server.js` (or command `npm start`)
+   - port, e.g. `3000`
+   - the subdomain from step 2
+
+   Webuzo then proxies the subdomain to that port. Enter the variables from `.env.example` in the app's environment settings, or put a `.env` file in the app folder (never inside `public_html`). `DATABASE_URL` is `mysql://dbuser:password@localhost:3306/dbname`, with special characters in the password URL-encoded.
+5. **Start the app,** then check `https://tpc.yourdomain.com/health`.
+6. **One-time setup on the server:**
+   ```bash
+   npm run shopify:setup -- https://tpc.yourdomain.com
+   npm run range:add -- test <first> <last> "TPC test numbers"
+   ```
+
+If your Webuzo version has no Node.js application manager, run it with pm2 instead (`npm i -g pm2 && pm2 start src/server.js --name tpc-courier && pm2 save && pm2 startup`), and add a reverse proxy from the subdomain to `http://127.0.0.1:3000`.
+
+**The app must stay running all the time.** It answers Shopify webhooks, and every 5 minutes it re-sends bookings TPC didn't confirm. Make sure the app manager or pm2 restarts it after a crash or server reboot.
+
+`shopify:setup` subscribes the `orders/paid`, `orders/create` and `orders/updated` webhooks to the given address, and creates the two pinned order metafields staff see on the order page. It's safe to run again.
 
 ### 4. Consignment ranges
 
@@ -92,7 +125,7 @@ TPC has no sandbox: tests use the live API key, with 10 test consignment numbers
 ## Development
 
 ```bash
-npm test          # needs a local Postgres; uses postgres://localhost:5432/tpc_courier_test (override with TEST_DATABASE_URL)
+npm test          # needs local MySQL; uses mysql://root@localhost:3306/tpc_courier_test (override with TEST_DATABASE_URL)
 npm run dev       # server with auto-restart
 npm run mock:tpc  # fake TPC API on :4010
 ```

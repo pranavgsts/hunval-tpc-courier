@@ -31,11 +31,11 @@ export function webhookRouter({ pool, booking, secret, log = console }) {
     try { order = JSON.parse(raw.toString('utf8')); } catch { return res.status(400).send('Bad JSON'); }
 
     if (webhookId) {
-      const { rowCount } = await pool.query(
-        'INSERT INTO webhook_events (webhook_id, topic) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      const { affectedRows } = await pool.query(
+        'INSERT IGNORE INTO webhook_events (webhook_id, topic) VALUES (?, ?)',
         [webhookId, topic],
       );
-      if (rowCount === 0) return res.status(200).send('Duplicate');
+      if (affectedRows === 0) return res.status(200).send('Duplicate');
     }
 
     res.status(200).send('OK');

@@ -1,4 +1,4 @@
-import { withTransaction } from './db.js';
+import { isDuplicateKey, withTransaction } from './db.js';
 
 // TPC accepts 5-15 character consignment numbers.
 const MIN_LENGTH = 5;
@@ -38,30 +38,35 @@ export function parseRange(start, end) {
   return range;
 }
 
-export async function addRange(pool, { label, kind, start, end }) {
+export async function addRange(db, { label, kind, start, end }) {
   const range = parseRange(start, end);
-  return withTransaction(pool, async (client) => {
+  return withTransaction(db, async (conn) => {
     // Serialise range inserts so the overlap check can't race.
-    await client.query('LOCK TABLE consignment_ranges IN SHARE ROW EXCLUSIVE MODE');
-    const overlap = await client.query(
-      `SELECT id, label FROM consignment_ranges
-        WHERE prefix = $1 AND width = $2 AND start_num <= $4 AND end_num >= $3`,
-      [range.prefix, range.width, range.start_num, range.end_num],
-    );
-    if (overlap.rowCount > 0) {
-      throw new Error(`Overlaps existing range #${overlap.rows[0].id} (${overlap.rows[0].label}).`);
+    await conn.query("SELECT GET_LOCK('tpc_add_range', 10)");
+    try {
+      const overlap = await conn.query(
+        `SELECT id, label FROM consignment_ranges
+          WHERE prefix = ? AND width = ? AND start_num <= ? AND end_num >= ?`,
+        [range.prefix, range.width, range.end_num, range.start_num],
+      );
+      if (overlap.rows.length > 0) {
+        throw new Error(`Overlaps existing range #${overlap.rows[0].id} (${overlap.rows[0].label}).`);
+      }
+      const { insertId } = await conn.query(
+        `INSERT INTO consignment_ranges (label, kind, prefix, width, start_num, end_num, next_num)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [label, kind, range.prefix, range.width, range.start_num, range.end_num, range.start_num],
+      );
+      const { rows } = await conn.query('SELECT * FROM consignment_ranges WHERE id = ?', [insertId]);
+      return rows[0];
+    } finally {
+      await conn.query("SELECT RELEASE_LOCK('tpc_add_range')");
     }
-    const { rows } = await client.query(
-      `INSERT INTO consignment_ranges (label, kind, prefix, width, start_num, end_num, next_num)
-       VALUES ($1, $2, $3, $4, $5, $6, $5) RETURNING *`,
-      [label, kind, range.prefix, range.width, range.start_num, range.end_num],
-    );
-    return rows[0];
   });
 }
 
-export async function deactivateRange(pool, id) {
-  await pool.query('UPDATE consignment_ranges SET active = FALSE WHERE id = $1', [id]);
+export async function deactivateRange(db, id) {
+  await db.query('UPDATE consignment_ranges SET active = 0 WHERE id = ?', [id]);
 }
 
 /**
@@ -69,11 +74,11 @@ export async function deactivateRange(pool, id) {
  * so two orders arriving together can never get the same number.
  * Returns the new consignments row, or null when every active range of this kind is used up.
  */
-export async function allocateNumber(client, kind, order) {
+export async function allocateNumber(conn, kind, order) {
   for (;;) {
-    const { rows: ranges } = await client.query(
+    const { rows: ranges } = await conn.query(
       `SELECT * FROM consignment_ranges
-        WHERE active AND kind = $1 AND next_num <= end_num
+        WHERE active = 1 AND kind = ? AND next_num <= end_num
         ORDER BY id LIMIT 1 FOR UPDATE`,
       [kind],
     );
@@ -81,37 +86,45 @@ export async function allocateNumber(client, kind, order) {
     if (!range) return null;
 
     const n = range.next_num;
-    await client.query('UPDATE consignment_ranges SET next_num = next_num + 1 WHERE id = $1', [range.id]);
+    await conn.query('UPDATE consignment_ranges SET next_num = next_num + 1 WHERE id = ?', [range.id]);
 
     const number = formatConsignment(range, n);
-    const { rows } = await client.query(
-      `INSERT INTO consignments (number, range_id, order_id, order_gid, order_name, status)
-       VALUES ($1, $2, $3, $4, $5, 'reserved')
-       ON CONFLICT (number) DO NOTHING RETURNING *`,
-      [number, range.id, order.id, order.gid, order.name],
-    );
-    if (rows[0]) return rows[0];
-    // Number already recorded (e.g. entered by hand earlier) - move on to the next one.
+    try {
+      await conn.query(
+        `INSERT INTO consignments (number, range_id, order_id, order_gid, order_name, status)
+         VALUES (?, ?, ?, ?, ?, 'reserved')`,
+        [number, range.id, order.id, order.gid, order.name],
+      );
+    } catch (error) {
+      // Number already recorded (e.g. entered by hand earlier) - move on to the next one.
+      if (isDuplicateKey(error, 'PRIMARY')) continue;
+      throw error;
+    }
+    const { rows } = await conn.query('SELECT * FROM consignments WHERE number = ?', [number]);
+    return rows[0];
   }
 }
 
-export async function rangeStatus(pool, kind) {
-  const { rows } = await pool.query(
+export async function rangeStatus(db, kind) {
+  const { rows } = await db.query(
     `SELECT id, label, kind, prefix, width, start_num, end_num, next_num, active,
             GREATEST(end_num - next_num + 1, 0) AS remaining,
             end_num - start_num + 1 AS total
        FROM consignment_ranges
-      WHERE ($1::text IS NULL OR kind = $1)
+      WHERE (? IS NULL OR kind = ?)
       ORDER BY id`,
-    [kind ?? null],
+    [kind ?? null, kind ?? null],
   );
   const active = rows.filter((r) => r.active);
   return {
     ranges: rows.map((r) => ({
       ...r,
+      active: Boolean(r.active),
+      remaining: Number(r.remaining),
+      total: Number(r.total),
       next: r.next_num <= r.end_num ? formatConsignment(r, r.next_num) : null,
     })),
-    remaining: active.reduce((sum, r) => sum + r.remaining, 0),
-    total: active.reduce((sum, r) => sum + r.total, 0),
+    remaining: active.reduce((sum, r) => sum + Number(r.remaining), 0),
+    total: active.reduce((sum, r) => sum + Number(r.total), 0),
   };
 }

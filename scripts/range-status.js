@@ -15,7 +15,7 @@ try {
   console.log(`Active total: ${remaining} of ${total} left.`);
 
   const { rows } = await pool.query(
-    `SELECT status, count(*)::int AS n FROM consignments GROUP BY status ORDER BY status`);
+    'SELECT status, COUNT(*) AS n FROM consignments GROUP BY status ORDER BY status');
   if (rows.length) console.log(`Consignments: ${rows.map((r) => `${r.status} ${r.n}`).join(', ')}`);
 } finally {
   await pool.end();

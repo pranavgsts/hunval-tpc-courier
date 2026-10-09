@@ -27,7 +27,7 @@ function setup({ config = testConfig(), tpcClient = tpc.client } = {}) {
 }
 
 async function consignment(orderId) {
-  const { rows } = await pool.query(`SELECT * FROM consignments WHERE order_id = $1 ORDER BY created_at`, [orderId]);
+  const { rows } = await pool.query(`SELECT * FROM consignments WHERE order_id = ? ORDER BY created_at, number`, [orderId]);
   return rows;
 }
 

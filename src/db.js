@@ -1,29 +1,65 @@
 import { readFile } from 'node:fs/promises';
-import pg from 'pg';
+import mysql from 'mysql2/promise';
 
-// BIGINT columns come back as strings by default; our numbers fit safely in a JS number.
-pg.types.setTypeParser(pg.types.builtins.INT8, (value) => Number(value));
+/**
+ * Thin wrapper over mysql2 so the rest of the app just calls
+ * db.query(sql, params) -> { rows, affectedRows, insertId }.
+ * Works with MySQL 8 and MariaDB 10.5+.
+ */
+function wrap(target) {
+  return {
+    async query(sql, params = []) {
+      const [result] = await target.query(sql, params);
+      return Array.isArray(result)
+        ? { rows: result, affectedRows: 0, insertId: 0 }
+        : { rows: [], affectedRows: result.affectedRows, insertId: result.insertId };
+    },
+  };
+}
 
 export function createPool(databaseUrl) {
-  return new pg.Pool({ connectionString: databaseUrl });
+  const pool = mysql.createPool({
+    uri: databaseUrl,
+    connectionLimit: 10,
+    // Store and read every timestamp as UTC.
+    timezone: 'Z',
+    supportBigNumbers: true,
+    decimalNumbers: true,
+  });
+  pool.pool.on('connection', (conn) => conn.query("SET time_zone = '+00:00'"));
+
+  return {
+    ...wrap(pool),
+    raw: pool,
+    end: () => pool.end(),
+  };
 }
 
-export async function migrate(pool) {
+export async function migrate(db) {
   const sql = await readFile(new URL('./schema.sql', import.meta.url), 'utf8');
-  await pool.query(sql);
+  const statements = sql
+    .split(/;\s*$/m)
+    .map((s) => s.replace(/^\s*--.*$/gm, '').trim())
+    .filter(Boolean);
+  for (const statement of statements) await db.query(statement);
 }
 
-export async function withTransaction(pool, fn) {
-  const client = await pool.connect();
+export async function withTransaction(db, fn) {
+  const conn = await db.raw.getConnection();
   try {
-    await client.query('BEGIN');
-    const result = await fn(client);
-    await client.query('COMMIT');
+    // READ COMMITTED avoids InnoDB gap locks, so concurrent bookings only wait on the range row.
+    await conn.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+    await conn.beginTransaction();
+    const result = await fn(wrap(conn));
+    await conn.commit();
     return result;
   } catch (error) {
-    await client.query('ROLLBACK');
+    await conn.rollback();
     throw error;
   } finally {
-    client.release();
+    conn.release();
   }
 }
+
+export const isDuplicateKey = (error, key) =>
+  error?.code === 'ER_DUP_ENTRY' && (!key || String(error.message).includes(key));

@@ -18,7 +18,7 @@ function int(value, fallback) {
 export function loadConfig(overrides = {}) {
   const config = {
     port: int(env.PORT, 3000),
-    databaseUrl: env.DATABASE_URL || 'postgres://localhost:5432/tpc_courier',
+    databaseUrl: env.DATABASE_URL || 'mysql://root@localhost:3306/tpc_courier',
 
     shopify: {
       shop: env.SHOPIFY_SHOP || '',

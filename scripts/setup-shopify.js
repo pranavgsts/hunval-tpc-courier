@@ -16,7 +16,17 @@ const client = createShopifyClient(loadConfig().shopify);
 
 const existing = await client.graphql(
   `query { webhookSubscriptions(first: 50) { nodes { id topic uri } } }`);
-const have = new Set(existing.webhookSubscriptions.nodes.filter((w) => w.uri === uri).map((w) => w.topic));
+const nodes = existing.webhookSubscriptions.nodes;
+const have = new Set(nodes.filter((w) => w.uri === uri).map((w) => w.topic));
+
+// Drop this app's subscriptions to an old address (e.g. the local tunnel after moving to the server).
+for (const old of nodes.filter((w) => w.uri !== uri && w.uri?.endsWith('/webhooks/shopify'))) {
+  const data = await client.graphql(
+    `mutation($id: ID!) { webhookSubscriptionDelete(id: $id) { userErrors { field message } } }`,
+    { id: old.id });
+  const errors = data.webhookSubscriptionDelete.userErrors;
+  console.log(`Webhook ${old.topic} → ${old.uri}: ${errors.length ? `could not remove: ${errors[0].message}` : 'removed old address'}`);
+}
 
 for (const topic of WEBHOOK_TOPICS) {
   const enumTopic = topic.toUpperCase().replace('/', '_');

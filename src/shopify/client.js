@@ -1,5 +1,10 @@
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Shopify sometimes answers with a full HTML page; keep log lines readable.
+async function shortBody(response) {
+  return (await response.text()).replace(/\s+/g, ' ').slice(0, 300);
+}
+
 /**
  * Minimal GraphQL Admin API client. Uses a static token when one is configured,
  * otherwise the client-credentials grant (Dev Dashboard app installed on a store in
@@ -18,7 +23,7 @@ export function createShopifyClient({ shop, clientId, clientSecret, apiVersion, 
       body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret }),
     });
     if (!response.ok) {
-      throw new Error(`Shopify token request failed: HTTP ${response.status} ${await response.text()}`);
+      throw new Error(`Shopify token request failed: HTTP ${response.status} ${await shortBody(response)}`);
     }
     const data = await response.json();
     token = data.access_token;
@@ -41,7 +46,7 @@ export function createShopifyClient({ shop, clientId, clientSecret, apiVersion, 
       await sleep(1000 * attempt);
       return graphql(query, variables, attempt + 1);
     }
-    if (!response.ok) throw new Error(`Shopify GraphQL HTTP ${response.status}: ${await response.text()}`);
+    if (!response.ok) throw new Error(`Shopify GraphQL HTTP ${response.status}: ${await shortBody(response)}`);
 
     const body = await response.json();
     if (body.errors?.some((e) => e.extensions?.code === 'THROTTLED') && attempt < 5) {
