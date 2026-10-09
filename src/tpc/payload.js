@@ -59,27 +59,80 @@ export function normalisePhone(raw) {
  *   line 1: recipient name (and company)
  *   lines 2-3: street address, wrapped; if it fits on one line, line 3 is "City, State - PIN"
  */
-export function packAddress(addr, phone) {
-  const name = clean([clean(addr.name) || clean([addr.first_name, addr.last_name].join(' ')), clean(addr.company)]
-    .filter(Boolean).join(', '));
-  let line1 = truncate(name, LINE_MAX);
-  if (line1.length < LINE_MIN && phone) line1 = truncate(clean(`${line1} - ${phone}`), LINE_MAX);
+// Common address words shortened only when the address doesn't fit otherwise.
+const ABBREVIATIONS = [
+  [/\bstreet\b/gi, 'St'], [/\broad\b/gi, 'Rd'], [/\bnear\b/gi, 'Nr'], [/\bopposite\b/gi, 'Opp'],
+  [/\bapartments\b/gi, 'Apts'], [/\bapartment\b/gi, 'Apt'], [/\bbuilding\b/gi, 'Bldg'],
+  [/\bfloor\b/gi, 'Flr'], [/\bbehind\b/gi, 'Bhd'], [/\bcolony\b/gi, 'Col'], [/\bextension\b/gi, 'Extn'],
+  [/\bpost office\b/gi, 'PO'], [/\bnumber\b/gi, 'No'],
+];
+const abbreviate = (text) => ABBREVIATIONS.reduce((t, [re, short]) => t.replace(re, short), text);
 
-  const street = [clean(addr.address1), clean(addr.address2)].filter(Boolean);
+const comparable = (s) => clean(s).toLowerCase().replace(/[\s.\-]+/g, ' ').trim();
+
+/**
+ * Street part of the address. Customers often repeat city, state and PIN in the address
+ * lines; those parts are dropped because TPC gets them separately and space is tight.
+ */
+function streetText(addr) {
+  const city = clean(addr.city);
+  const province = clean(addr.province);
+  const zip = clean(addr.zip);
+  const drop = new Set([city, province, zip, 'india', `${city} ${zip}`, `${province} ${zip}`, `${province} india`]
+    .map(comparable).filter(Boolean));
+  return [addr.address1, addr.address2]
+    .flatMap((line) => clean(line).split(','))
+    .map(clean)
+    .filter((part) => part && !drop.has(comparable(part)))
+    .join(', ');
+}
+
+/** Line 3 is too short for TPC's 5-character minimum: append the locality. */
+function fillShortLast(lines, locality) {
+  const [l1, l2 = '', l3 = ''] = lines;
+  if (!l3) return [l1, l2, truncate(locality, LINE_MAX)];
+  if (l3.length < LINE_MIN) return [l1, l2, truncate(clean(`${l3}, ${locality}`), LINE_MAX)];
+  return [l1, l2, l3];
+}
+
+/**
+ * TPC wants three address lines of 5-50 characters each and has no separate name field.
+ * Tries, in order, until one fits:
+ *   1. name on line 1, street on lines 2-3 (city/state/PIN on line 3 if the street fits on one line)
+ *   2. the same with common words abbreviated (Street -> St, Near -> Nr, ...)
+ *   3. name and street flowing together across all three lines
+ *   4. the same with abbreviations
+ */
+export function packAddress(addr, phone) {
+  let name = truncate(clean([clean(addr.name) || clean([addr.first_name, addr.last_name].join(' ')), clean(addr.company)]
+    .filter(Boolean).join(', ')), LINE_MAX);
+  if (name.length < LINE_MIN && phone) name = truncate(clean(`${name} - ${phone}`), LINE_MAX);
+
+  const street = streetText(addr);
   const locality = clean([clean(addr.city), clean(addr.province)].filter(Boolean).join(', ')
     + (clean(addr.zip) ? ` - ${clean(addr.zip)}` : ''));
 
-  const lines = wrap(street.join(', '), LINE_MAX);
-  if (lines.length > 2) {
-    return { error: `Address lines are too long for TPC (max ${LINE_MAX * 2} characters for the street address, excluding name and city). Shorten the shipping address.` };
+  const nameOnOwnLine = (text) => {
+    const lines = wrap(text, LINE_MAX);
+    return lines.length <= 2 ? fillShortLast([name, ...lines], locality) : null;
+  };
+  const flowing = (text) => {
+    const lines = wrap(clean(`${name}, ${text}`), LINE_MAX);
+    return lines.length <= 3 ? fillShortLast(lines, locality) : null;
+  };
+
+  const lines = nameOnOwnLine(street) ?? nameOnOwnLine(abbreviate(street))
+    ?? flowing(street) ?? flowing(abbreviate(street));
+  if (!lines) {
+    const length = `${name}, ${abbreviate(street)}`.length;
+    return {
+      error: `Address is too long for TPC: name and street are ${length} characters even after shortening, `
+        + `and TPC allows 3 lines of ${LINE_MAX}. Shorten the shipping address (city, state and PIN are sent separately).`,
+    };
   }
-  let [line2 = '', line3 = ''] = lines;
-  if (!line3) {
-    line3 = truncate(locality, LINE_MAX);
-  } else if (line3.length < LINE_MIN) {
-    line3 = truncate(clean(`${line3}, ${locality}`), LINE_MAX);
-  }
-  return { ship_adds1: line1, ship_adds2: line2, ship_adds3: line3 };
+  // A wrap can leave a line ending in "," - drop it so labels read cleanly.
+  const [ship_adds1, ship_adds2, ship_adds3] = lines.map((l) => l.replace(/[\s,]+$/, ''));
+  return { ship_adds1, ship_adds2, ship_adds3 };
 }
 
 export function validatePayload(payload) {

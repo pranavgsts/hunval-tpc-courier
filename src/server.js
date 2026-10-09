@@ -9,8 +9,11 @@ const RESEND_INTERVAL_MS = 5 * 60_000;
 
 const config = loadConfig();
 
-for (const key of ['shop', 'clientSecret']) {
-  if (!config.shopify[key]) throw new Error(`Missing Shopify setting: ${key}. See .env.example.`);
+const missing = [['shop', 'SHOPIFY_SHOP'], ['clientSecret', 'SHOPIFY_CLIENT_SECRET']]
+  .filter(([key]) => !config.shopify[key]).map(([, name]) => name);
+if (missing.length) {
+  throw new Error(`Missing ${missing.join(', ')}. Set it in the app's environment settings or in .env in the app folder `
+    + '(see .env.example). The client secret is in the Shopify Dev Dashboard → your app → Settings.');
 }
 if (config.tpc.mode === 'live') {
   if (!config.tpc.apiKey || !config.tpc.apiId) throw new Error('TPC_MODE=live needs TPC_API_KEY and TPC_API_ID.');

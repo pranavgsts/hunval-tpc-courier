@@ -98,14 +98,57 @@ test('a very short line 3 gets the locality appended', () => {
   assert.equal(lines.ship_adds3, 'Nr, Erode - 638001');
 });
 
-test('address too long for two lines is reported, not truncated', () => {
+test('city, state and PIN repeated in the address lines are dropped', () => {
   const lines = packAddress({
     name: 'Arun Kumar',
-    address1: 'Door No 45/2, Second Floor, Sri Lakshmi Apartments, Block C',
+    address1: '4 MG Road, Erode',
+    address2: 'Tamil Nadu, 638001, India',
+    city: 'Erode', province: 'Tamil Nadu', zip: '638001',
+  });
+  assert.deepEqual(lines, { ship_adds1: 'Arun Kumar', ship_adds2: '4 MG Road', ship_adds3: 'Erode, Tamil Nadu - 638001' });
+});
+
+test('street over 100 characters flows into line 1 after the name', () => {
+  const addr = {
+    name: 'Arun Kumar',
+    address1: 'Door No 45/2, Second Floor, Sri Lakshmi Residency, Block C',
+    address2: 'Periyar Nagar Main Rd, Opp Govt Higher Secondary School, Bhd Temple',
+    city: 'Erode', zip: '638001',
+  };
+  const lines = packAddress(addr);
+  assert.equal(lines.error, undefined);
+  for (const l of Object.values(lines)) assert.ok(l.length >= 5 && l.length <= 50, l);
+  assert.ok(lines.ship_adds1.startsWith('Arun Kumar, '));
+  const noCommas = (s) => s.replaceAll(',', '');
+  assert.equal(noCommas(Object.values(lines).join(' ')), noCommas(`Arun Kumar, ${addr.address1}, ${addr.address2}`));
+  assert.ok(Object.values(lines).every((l) => !l.endsWith(',')));
+});
+
+test('common words are abbreviated only when needed to fit', () => {
+  const lines = packAddress({
+    name: 'Arun Kumar',
+    address1: 'Door Number 45/2, Second Floor, Sri Lakshmi Apartments, Block C',
     address2: 'Periyar Nagar Main Road, Opposite Government Higher Secondary School, Behind Temple',
     city: 'Erode', zip: '638001',
   });
-  assert.match(lines.error, /too long/);
+  assert.equal(lines.error, undefined);
+  const all = Object.values(lines).join(' ');
+  assert.match(all, /Door No 45\/2, Second Flr, Sri Lakshmi Apts/);
+  assert.match(all, /Opp Government/);
+  for (const l of Object.values(lines)) assert.ok(l.length >= 5 && l.length <= 50, l);
+
+  // A short address keeps its words as typed.
+  assert.equal(packAddress({ name: 'Arun Kumar', address1: '4 Gandhi Road', city: 'Salem', zip: '636001' }).ship_adds2, '4 Gandhi Road');
+});
+
+test('an address too long even after shortening is reported, not cut off', () => {
+  const lines = packAddress({
+    name: 'Arun Kumar',
+    address1: 'Door No 45/2, Second Floor, Sri Lakshmi Narasimha Swamy Residency, Block C, Wing 4',
+    address2: 'Periyar Nagar Main Rd, Opp Govt Higher Secondary School, Bhd Sri Kamakshi Amman Temple, Landmark Big Banyan Tree',
+    city: 'Erode', zip: '638001',
+  });
+  assert.match(lines.error, /too long for TPC/);
 });
 
 test('very short names are padded with the phone so line 1 reaches 5 characters', () => {

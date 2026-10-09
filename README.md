@@ -54,7 +54,7 @@ Needs Node 20.12+ and MySQL 8 (or MariaDB 10.5+). On a Mac: `brew install mysql 
 npm install
 cp .env.example .env        # then fill in the values
 mysql -uroot -e "CREATE DATABASE tpc_courier"
-npm run range:add -- test 5001000001 5001000010 "TPC test numbers"
+npm run range:add -- test TCG200001 TCG200025 "TPC test numbers"
 npm run mock:tpc            # terminal 1: fake TPC API on :4010
 npm start                   # terminal 2: the app on :3000 (creates its tables on start)
 ```
@@ -87,7 +87,8 @@ The tunnel address changes every time cloudflared restarts, so re-run `shopify:s
 6. **One-time setup on the server:**
    ```bash
    npm run shopify:setup -- https://tpc.yourdomain.com
-   npm run range:add -- test <first> <last> "TPC test numbers"
+   npm run range:add -- test TCG200001 TCG200025 "TPC test numbers"
+   npm run range:add -- production TCG660001 TCG670000 "Hunter Readymades live range"
    ```
 
 If your Webuzo version has no Node.js application manager, run it with pm2 instead (`npm i -g pm2 && pm2 start src/server.js --name tpc-courier && pm2 save && pm2 startup`), and add a reverse proxy from the subdomain to `http://127.0.0.1:3000`.
@@ -99,16 +100,16 @@ If your Webuzo version has no Node.js application manager, run it with pm2 inste
 ### 4. Consignment ranges
 
 ```bash
-npm run range:add -- test 5001000001 5001000010 "TPC test numbers"
-npm run range:add -- production 5001000011 5001010000 "TPC range Oct 2026"
+npm run range:add -- test TCG200001 TCG200025 "TPC test numbers"
+npm run range:add -- production TCG660001 TCG670000 "Hunter Readymades live range"
 npm run range:status
 ```
 
 Use the exact first and last numbers TPC gives you, including any letter prefix or leading zeros. `TPC_RANGE_KIND` picks which kind is used. The app logs a warning when 10% of the active range is left, and `/health` shows numbers remaining.
 
-## Going live with only 10 test numbers
+## Going live with TPC's test numbers
 
-TPC has no sandbox: tests use the live API key, with 10 test consignment numbers.
+TPC has no sandbox: tests use the live API key, with 25 test consignment numbers (TCG200001–TCG200025).
 
 1. **Develop against the mock.** Run `npm run mock:tpc` with `TPC_MODE=live` and `TPC_API_URL=http://localhost:4010/apps/api/booking`. The mock copies TPC's documented validation, duplicate check and responses.
 2. **Dry run on the real store.** Set `TPC_MODE=dry-run`, place a few real orders, and check **TPC booking status** on each. It shows the weight, pincode and the three address lines that would be sent. No numbers are used.
@@ -119,7 +120,7 @@ TPC has no sandbox: tests use the live API key, with 10 test consignment numbers
    - a multi-item order, to check the total weight
    - a handover → fulfil
 
-   That keeps about 5 numbers spare. Ask TPC to cancel these test bookings.
+   That leaves about 20 numbers spare. Ask TPC to cancel these test bookings.
 4. **Go live.** Add the production range, then set `TPC_RANGE_KIND=production`.
 
 ## Development

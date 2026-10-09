@@ -17,9 +17,19 @@ function wrap(target) {
   };
 }
 
-export function createPool(databaseUrl) {
+/** `database` is a mysql:// URL or { host, port, user, password, database }. */
+export function createPool(database) {
+  let connection = database;
+  if (typeof database === 'string') {
+    if (!URL.canParse(database)) {
+      // Don't echo the URL: it contains the password.
+      throw new Error('DATABASE_URL is not a valid URL. Special characters in the password (# @ : / ? %) must be '
+        + 'URL-encoded (e.g. # as %23), or set DB_HOST, DB_USER, DB_PASSWORD and DB_NAME instead.');
+    }
+    connection = { uri: database };
+  }
   const pool = mysql.createPool({
-    uri: databaseUrl,
+    ...connection,
     connectionLimit: 10,
     // Store and read every timestamp as UTC.
     timezone: 'Z',

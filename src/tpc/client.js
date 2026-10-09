@@ -33,7 +33,9 @@ export function createTpcClient({ apiUrl, apiKey, apiId, timeoutMs = 20_000 }) {
   };
 }
 
-export function classify(status, body) {
+export function classify(status, rawBody) {
+  // The live API wraps replies in an array ([{...}]) although the doc shows a bare object.
+  const body = Array.isArray(rawBody) ? (rawBody[0] ?? {}) : rawBody;
   const message = body?.REF_MESSAGE || body?.errors || body?.msg || body?.raw || `HTTP ${status}`;
   const text = typeof message === 'string' ? message : JSON.stringify(message);
 

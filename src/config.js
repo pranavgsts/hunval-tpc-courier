@@ -1,7 +1,10 @@
 import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-// Real environment variables win over .env, so the host's config always takes precedence.
-if (existsSync('.env')) process.loadEnvFile('.env');
+// Read .env from the app folder, not the current directory: app managers (Webuzo, pm2)
+// often start Node from somewhere else. Real environment variables still win over it.
+const ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
+if (existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 
 const env = process.env;
 
@@ -18,7 +21,16 @@ function int(value, fallback) {
 export function loadConfig(overrides = {}) {
   const config = {
     port: int(env.PORT, 3000),
-    databaseUrl: env.DATABASE_URL || 'mysql://root@localhost:3306/tpc_courier',
+    // Separate DB_* values take precedence: passwords with # @ : / need no URL-encoding there.
+    databaseUrl: env.DB_NAME
+      ? {
+        host: env.DB_HOST || 'localhost',
+        port: int(env.DB_PORT, 3306),
+        user: env.DB_USER || '',
+        password: env.DB_PASSWORD || '',
+        database: env.DB_NAME,
+      }
+      : env.DATABASE_URL || 'mysql://root@localhost:3306/tpc_courier',
 
     shopify: {
       shop: env.SHOPIFY_SHOP || '',
@@ -31,8 +43,8 @@ export function loadConfig(overrides = {}) {
     tpc: {
       mode: env.TPC_MODE === 'live' ? 'live' : 'dry-run',
       apiUrl: env.TPC_API_URL || 'http://tcg.tpctn.in/apps/api/booking',
-      apiKey: env.TPC_API_KEY || '',
-      apiId: env.TPC_API_ID || '',
+      apiKey: (env.TPC_API_KEY || '').trim(),
+      apiId: (env.TPC_API_ID || '').trim(),
       rangeKind: env.TPC_RANGE_KIND === 'production' ? 'production' : 'test',
       systemName: env.TPC_SYSTEM_NAME || 'Shopify',
       contentDesc: env.TPC_CONTENT_DESC || '',
