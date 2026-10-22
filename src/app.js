@@ -21,7 +21,12 @@ export function createApp({ pool, booking, config, log = console }) {
   app.get('/health', async (_req, res) => {
     try {
       const { remaining, total } = await rangeStatus(pool, config.tpc.rangeKind);
-      res.json({ ok: true, mode: config.tpc.mode, rangeKind: config.tpc.rangeKind, numbersRemaining: remaining, numbersTotal: total });
+      res.json({
+        ok: true, mode: config.tpc.mode, rangeKind: config.tpc.rangeKind,
+        // Which TPC address the running app uses (app-manager env vars override .env).
+        tpcApi: URL.canParse(config.tpc.apiUrl) ? new URL(config.tpc.apiUrl).host : 'invalid TPC_API_URL',
+        numbersRemaining: remaining, numbersTotal: total,
+      });
     } catch (error) {
       log.error(`[health] ${error.message}`);
       res.status(503).json({ ok: false });

@@ -40,7 +40,7 @@ test('a paid order is booked with the first test number and tagged in Shopify', 
   assert.deepEqual(result, { status: 'booked', number: '5001000001' });
   const [row] = await consignment(order.id);
   assert.equal(row.status, 'booked');
-  assert.equal(row.tpc_ref_no, '2001');
+  assert.equal(row.tpc_ref_no, 'MCK');
   assert.equal(tpc.bookings.get('5001000001').cust_refno, String(order.id));
   assert.ok(shopify.tags.get(order.admin_graphql_api_id).has('tpc-booked'));
   assert.equal(shopify.metafields.get(order.admin_graphql_api_id).consignment_no, '5001000001');

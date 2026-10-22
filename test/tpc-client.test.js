@@ -3,13 +3,13 @@ import { test } from 'node:test';
 import { classify } from '../src/tpc/client.js';
 
 // Replies as the live API sends them (array-wrapped) and as the doc shows them (bare object).
-const success = { REF_NO: '2002', REF_MESSAGE: 'Successfully Saved.', ERROR_STATUS: 'SUCCESS' };
+const success = { REF_NO: '2002', REF_MESSAGE: 'Successfully Saved.', ERROR_STATUS: 'SUCCESS', MF_CITYCODE: 'SVP' };
 const duplicate = { REF_NO: '1006', REF_MESSAGE: 'This Consignment No. is Already Exist. Enter Valid Consignment No.', ERROR_STATUS: 'FAILED' };
 const badKey = { REF_NO: '1001', REF_MESSAGE: 'Invalid API KEY. Please Contact Admin', ERROR_STATUS: 'FAILED' };
 
 for (const [form, wrapFn] of [['array-wrapped (live)', (b) => [b]], ['bare object (doc)', (b) => b]]) {
   test(`${form}: success is booked with TPC's ref`, () => {
-    assert.deepEqual(classify(200, wrapFn(success)), { outcome: 'booked', status: 200, refNo: '2002', message: 'Successfully Saved.' });
+    assert.deepEqual(classify(200, wrapFn(success)), { outcome: 'booked', status: 200, cityCode: 'SVP', message: 'Successfully Saved.' });
   });
 
   test(`${form}: existing consignment number is a duplicate`, () => {

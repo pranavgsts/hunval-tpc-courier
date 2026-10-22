@@ -5,12 +5,12 @@ import { validatePayload } from './payload.js';
 /**
  * Stand-in for TPC's booking API, copying the documented behaviour: X-Api-Key/X-Api-Id
  * headers, multipart form fields, the field validation rules, duplicate consignment
- * numbers and the response bodies (wrapped in an array, as the live API does). Bookings are kept in memory.
+ * numbers and the response bodies as the live API sends them (errors array-wrapped, success as an
+ * object with MF_CITYCODE). Bookings are kept in memory.
  */
 export function createMockTpcApp({ apiKey = 'test-key', apiId = '1' } = {}) {
   const app = express();
   const bookings = new Map();
-  let refNo = 2000;
   const queuedFailures = [];
 
   app.post('/apps/api/booking', multer().none(), express.urlencoded({ extended: false }), (req, res) => {
@@ -35,9 +35,8 @@ export function createMockTpcApp({ apiKey = 'test-key', apiId = '1' } = {}) {
       }]);
     }
 
-    refNo += 1;
-    bookings.set(req.body.consignmentno, { ...req.body, REF_NO: String(refNo) });
-    return res.json([{ REF_NO: String(refNo), REF_MESSAGE: 'Successfully Saved.', ERROR_STATUS: 'SUCCESS' }]);
+    bookings.set(req.body.consignmentno, { ...req.body });
+    return res.json({ REF_NO: '2002', REF_MESSAGE: 'Successfully Saved.', ERROR_STATUS: 'SUCCESS', MF_CITYCODE: 'MCK' });
   });
 
   app.get('/bookings', (_req, res) => res.json([...bookings.values()]));

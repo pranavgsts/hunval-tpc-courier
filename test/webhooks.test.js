@@ -79,5 +79,5 @@ test('ignores topics the app does not handle', async () => {
 
 test('health shows numbers left without order data', async () => {
   const res = await fetch(`${baseUrl}/health`);
-  assert.deepEqual(await res.json(), { ok: true, mode: 'live', rangeKind: 'test', numbersRemaining: 0, numbersTotal: 0 });
+  assert.deepEqual(await res.json(), { ok: true, mode: 'live', rangeKind: 'test', tpcApi: 'tcg.tpctn.in', numbersRemaining: 0, numbersTotal: 0 });
 });

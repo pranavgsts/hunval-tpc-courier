@@ -43,7 +43,8 @@ export function classify(status, rawBody) {
 
   if (status >= 500) return { outcome: 'unknown', status, message: text };
   if (body?.ERROR_STATUS === 'SUCCESS' && status < 300) {
-    return { outcome: 'booked', status, refNo: String(body.REF_NO ?? ''), message: text };
+    // REF_NO is TPC's status code (2002 = saved), not a booking reference; MF_CITYCODE is the destination.
+    return { outcome: 'booked', status, cityCode: String(body.MF_CITYCODE ?? ''), message: text };
   }
   if (/already\s+exist/i.test(text)) return { outcome: 'duplicate', status, message: text };
   if (status === 401) return { outcome: 'rejected', status, message: `TPC rejected the API key/ID: ${text}` };

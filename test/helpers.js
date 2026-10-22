@@ -29,7 +29,7 @@ export function testConfig(overrides = {}) {
     ...overrides,
     shopify: { shop: 'test-shop', clientSecret: 'shh-secret', ...overrides.shopify },
     tpc: {
-      mode: 'live', apiKey: 'test-key', apiId: '1', rangeKind: 'test',
+      mode: 'live', apiUrl: 'http://tcg.tpctn.in/apps/api/booking', apiKey: 'test-key', apiId: '1', rangeKind: 'test',
       systemName: 'Shopify', contentDesc: 'Apparel', noOfPieces: 1, packagingGrams: 100, timeoutMs: 2000,
       ...overrides.tpc,
     },

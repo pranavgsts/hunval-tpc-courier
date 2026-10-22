@@ -31,7 +31,7 @@ const booking = createBookingService({ pool, shopify, tpc, config });
 
 const app = createApp({ pool, booking, config });
 app.listen(config.port, () => {
-  console.log(`[server] Listening on :${config.port} (TPC ${config.tpc.mode}, ${config.tpc.rangeKind} numbers)`);
+  console.log(`[server] Listening on :${config.port} (TPC ${config.tpc.mode} at ${config.tpc.apiUrl}, ${config.tpc.rangeKind} numbers)`);
 });
 
 const resend = () => booking.resendPending()

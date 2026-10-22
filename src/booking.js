@@ -31,7 +31,7 @@ function skipReason(order) {
 /**
  * Books orders with TPC and fulfils them when staff tag the order as handed over.
  * shopify: { addTags, removeTags, setMetafields, fulfil } (see shopify/client.js)
- * tpc:     { book(payload) -> { outcome, message, refNo } } (see tpc/client.js)
+ * tpc:     { book(payload) -> { outcome, message, cityCode } } (see tpc/client.js)
  */
 export function createBookingService({ pool, shopify, tpc, config, log = console }) {
   const { tags } = config;
@@ -80,7 +80,7 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
     await shopifySafely(`mark ${ref.name} booked`, async () => {
       await shopify.setMetafields(ref.gid, {
         consignment_no: row.number,
-        status: `Booked with TPC${row.tpc_ref_no ? ` (ref ${row.tpc_ref_no})` : ''}. Add tag "${tags.handover}" when the parcel is handed over.`,
+        status: `Booked with TPC${row.tpc_ref_no ? ` (destination ${row.tpc_ref_no})` : ''}. Add tag "${tags.handover}" when the parcel is handed over.`,
       });
       await shopify.addTags(ref.gid, [tags.booked]);
       await shopify.removeTags(ref.gid, [tags.failed, tags.dryRun]);
@@ -133,7 +133,7 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
     if (result.outcome === 'booked' || (result.outcome === 'duplicate' && hadUnknown)) {
       row = await updateRow(row.number, {
         status: 'booked', last_outcome: 'booked', last_error: null,
-        tpc_ref_no: result.refNo || null, booked_at: new Date(),
+        tpc_ref_no: result.cityCode || null, booked_at: new Date(),
       });
       return { outcome: 'booked', row };
     }
