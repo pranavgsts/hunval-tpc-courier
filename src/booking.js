@@ -83,7 +83,7 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
         status: `Booked with TPC${row.tpc_ref_no ? ` (destination ${row.tpc_ref_no})` : ''}. Add tag "${tags.handover}" when the parcel is handed over.`,
       });
       await shopify.addTags(ref.gid, [tags.booked]);
-      await shopify.removeTags(ref.gid, [tags.failed, tags.dryRun]);
+      await shopify.removeTags(ref.gid, [tags.failed, tags.dryRun, tags.retry]);
     });
   }
 
@@ -290,6 +290,28 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
   }
 
   /** Re-send bookings whose outcome is still unknown (timeouts, TPC down, app restarted mid-send). */
+  /** Re-send a booking from its stored request, if the row is still in the expected status. */
+  async function resendStored(stale, expectedStatus) {
+    const ref = { id: stale.order_id, gid: stale.order_gid, name: stale.order_name };
+    return withOrderLock(ref.id, async () => {
+      const row = await liveRow(ref.id);
+      if (row?.number !== stale.number || row.status !== expectedStatus) return { status: 'skipped', number: stale.number };
+      if (!row.payload) {
+        // The app stopped between taking the number and sending it, so TPC never saw it.
+        await updateRow(row.number, { status: 'failed', last_error: 'Interrupted before sending to TPC.' });
+        await reportFailed(ref, 'Booking was interrupted before reaching TPC.');
+        return { status: 'failed', number: row.number };
+      }
+      const sent = await send(row, row.payload);
+      if (sent.outcome === 'duplicate') {
+        await reportFailed(ref, `TPC says consignment ${row.number} already exists for another booking.`);
+        return { status: 'failed', number: row.number };
+      }
+      return finish(ref, sent);
+    });
+  }
+
+  /** Re-send bookings whose outcome is still unknown (timeouts, TPC down, app restarted mid-send). */
   async function resendPending({ olderThanMs = 120_000 } = {}) {
     const { rows } = await pool.query(
       `SELECT * FROM consignments
@@ -298,27 +320,27 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
       [olderThanMs * 1000],
     );
     const results = [];
-    for (const stale of rows.map(normalise)) {
-      const ref = { id: stale.order_id, gid: stale.order_gid, name: stale.order_name };
-      results.push(await withOrderLock(ref.id, async () => {
-        const row = await liveRow(ref.id);
-        if (row?.number !== stale.number || row.status !== 'reserved') return { status: 'skipped' };
-        if (!row.payload) {
-          // The app stopped between taking the number and sending it, so TPC never saw it.
-          await updateRow(row.number, { status: 'failed', last_error: 'Interrupted before sending to TPC.' });
-          await reportFailed(ref, 'Booking was interrupted before reaching TPC.');
-          return { status: 'failed', number: row.number };
-        }
-        const sent = await send(row, row.payload);
-        if (sent.outcome === 'duplicate') {
-          await reportFailed(ref, `TPC says consignment ${row.number} already exists for another booking.`);
-          return { status: 'failed', number: row.number };
-        }
-        return finish(ref, sent);
-      }));
-    }
+    for (const stale of rows.map(normalise)) results.push(await resendStored(stale, 'reserved'));
     return results;
   }
 
-  return { handleWebhook, bookOrder, handover, retry, resendPending };
+  /**
+   * Re-send bookings that failed only because TPC couldn't be reached, from their stored
+   * request, without waiting for a tpc-retry tag. TPC rejections are left alone: those
+   * need the order fixed first. `numbers` limits it to those consignment numbers.
+   */
+  async function resendFailed({ numbers = [] } = {}) {
+    const { rows } = await pool.query(
+      `SELECT * FROM consignments
+        WHERE status = 'failed' AND last_outcome = 'unknown' AND payload IS NOT NULL
+          ${numbers.length ? 'AND number IN (?)' : ''}
+        ORDER BY updated_at`,
+      numbers.length ? [numbers] : [],
+    );
+    const results = [];
+    for (const stale of rows.map(normalise)) results.push(await resendStored(stale, 'failed'));
+    return results;
+  }
+
+  return { handleWebhook, bookOrder, handover, retry, resendPending, resendFailed };
 }

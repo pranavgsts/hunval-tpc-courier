@@ -14,6 +14,7 @@
     "range:add": "node scripts/add-range.js",
     "range:status": "node scripts/range-status.js",
     "diagnose": "node scripts/diagnose-booking.js",
+    "resend-failed": "node scripts/resend-failed.js",
     "shopify:setup": "node scripts/setup-shopify.js",
     "test": "node --test --test-concurrency=1"
   },

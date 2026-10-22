@@ -164,6 +164,46 @@ test('gives up after the maximum attempts but keeps the number', async () => {
   assert.deepEqual(retried, { status: 'booked', number: '5001000001' });
 });
 
+test('resendFailed books orders that gave up because TPC was unreachable, without a retry tag', async () => {
+  const { booking, shopify } = setup({ config: testConfig({ maxSendAttempts: 1 }) });
+  const unreachable = makeOrder();
+  const savedMeanwhile = makeOrder();
+  const rejected = makeOrder();
+  tpc.failNext(503);
+  tpc.failNext(503);
+  tpc.failNext(406, { errors: 'The ship_city field is invalid.' });
+
+  assert.equal((await booking.handleWebhook('orders/paid', unreachable)).status, 'failed');
+  assert.equal((await booking.handleWebhook('orders/paid', savedMeanwhile)).status, 'failed');
+  assert.equal((await booking.handleWebhook('orders/paid', rejected)).status, 'failed');
+  // Like the diagnose run: TPC saved this one even though the app never saw a reply.
+  tpc.bookings.set('5001000002', { consignmentno: '5001000002' });
+
+  const results = await booking.resendFailed();
+
+  assert.deepEqual(results, [
+    { status: 'booked', number: '5001000001' },
+    { status: 'booked', number: '5001000002' },
+  ]);
+  assert.equal((await consignment(rejected.id))[0].status, 'failed'); // needs fixing first, left alone
+  for (const order of [unreachable, savedMeanwhile]) {
+    const tags = shopify.tags.get(order.admin_graphql_api_id);
+    assert.ok(tags.has('tpc-booked') && !tags.has('tpc-failed'));
+  }
+  assert.deepEqual(await booking.resendFailed(), []); // nothing left to do
+});
+
+test('resendFailed can be limited to specific consignment numbers', async () => {
+  const { booking } = setup({ config: testConfig({ maxSendAttempts: 1 }) });
+  tpc.failNext(503);
+  tpc.failNext(503);
+  await booking.handleWebhook('orders/paid', makeOrder());
+  await booking.handleWebhook('orders/paid', makeOrder());
+
+  assert.deepEqual(await booking.resendFailed({ numbers: ['5001000002'] }), [{ status: 'booked', number: '5001000002' }]);
+  assert.equal(tpc.bookings.size, 1);
+});
+
 test('fails clearly when the range is used up', async () => {
   const { booking, shopify } = setup();
   for (let i = 0; i < 10; i += 1) await booking.handleWebhook('orders/paid', makeOrder());
