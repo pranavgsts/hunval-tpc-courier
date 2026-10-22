@@ -228,6 +228,28 @@ test('dry-run mode never calls TPC or uses a number', async () => {
   assert.ok(shopify.tags.get(order.admin_graphql_api_id).has('tpc-dry-run'));
 });
 
+test('a staff retry books an order that was already fulfilled by hand', async () => {
+  const { booking } = setup();
+  const order = makeOrder({ fulfillment_status: 'fulfilled' });
+
+  // The automatic booking on payment skips it...
+  assert.deepEqual(await booking.handleWebhook('orders/paid', order), { status: 'skipped', reason: 'order is already fulfilled' });
+  // ...but staff adding tpc-retry books it.
+  const retried = await booking.handleWebhook('orders/updated', { ...order, tags: 'tpc-retry' });
+  assert.deepEqual(retried, { status: 'booked', number: '5001000001' });
+});
+
+test('a skipped retry says why on the order', async () => {
+  const { booking, shopify } = setup();
+  const order = makeOrder({ cancelled_at: '2026-10-09T10:00:00Z' });
+
+  const result = await booking.handleWebhook('orders/updated', { ...order, tags: 'tpc-retry' });
+
+  assert.equal(result.status, 'skipped');
+  assert.equal(shopify.metafields.get(order.admin_graphql_api_id).status, 'Retry skipped: order is cancelled.');
+  assert.ok(!shopify.tags.get(order.admin_graphql_api_id).has('tpc-retry'));
+});
+
 test('cancelled orders are skipped', async () => {
   const { booking } = setup();
   const result = await booking.handleWebhook('orders/paid', makeOrder({ cancelled_at: '2026-10-09T10:00:00Z' }));

@@ -21,9 +21,11 @@ export function isCashOnDelivery(order) {
     && order.financial_status === 'pending';
 }
 
-function skipReason(order) {
+// A staff retry books even fulfilled orders: staff may mark an order fulfilled by hand
+// before (or without) the booking going through.
+function skipReason(order, { staffRetry = false } = {}) {
   if (order.cancelled_at) return 'order is cancelled';
-  if (order.fulfillment_status === 'fulfilled') return 'order is already fulfilled';
+  if (order.fulfillment_status === 'fulfilled' && !staffRetry) return 'order is already fulfilled';
   if (!(order.line_items ?? []).some((li) => li.requires_shipping !== false)) return 'nothing to ship';
   return null;
 }
@@ -172,10 +174,10 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
     return { status: 'pending', number: sent.row.number, message: sent.message };
   }
 
-  async function bookOrder(order) {
+  async function bookOrder(order, { staffRetry = false } = {}) {
     const ref = orderRef(order);
     return withOrderLock(ref.id, async () => {
-      const reason = skipReason(order);
+      const reason = skipReason(order, { staffRetry });
       if (reason) {
         log.info(`[booking] Skipping ${ref.name}: ${reason}`);
         return { status: 'skipped', reason };
@@ -268,7 +270,14 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
   async function retry(order) {
     const ref = orderRef(order);
     await shopifySafely(`remove retry tag ${ref.name}`, () => shopify.removeTags(ref.gid, [tags.retry]));
-    return bookOrder(order);
+    const result = await bookOrder(order, { staffRetry: true });
+    if (result.status === 'skipped') {
+      // Say why on the order, or the tag just disappears with nothing happening.
+      await shopifySafely(`note skipped retry ${ref.name}`, () => shopify.setMetafields(ref.gid, {
+        status: `Retry skipped: ${result.reason}.`,
+      }));
+    }
+    return result;
   }
 
   async function handleWebhook(topic, order) {
