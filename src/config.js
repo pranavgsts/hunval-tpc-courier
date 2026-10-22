@@ -50,6 +50,8 @@ export function loadConfig(overrides = {}) {
       contentDesc: env.TPC_CONTENT_DESC || '',
       noOfPieces: int(env.TPC_NO_OF_PIECES, 1),
       packagingGrams: int(env.PACKAGING_GRAMS, 0),
+      // Used per item for products with no weight in Shopify; 0 = refuse to book them instead.
+      defaultItemGrams: int(env.DEFAULT_ITEM_GRAMS, 0),
       timeoutMs: int(env.TPC_TIMEOUT_MS, 20_000),
     },
 

@@ -184,7 +184,8 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
       let row = await liveRow(ref.id);
       if (row && ['booked', 'fulfilled'].includes(row.status)) return { status: 'already-booked', number: row.number };
 
-      const { payload, errors } = buildBookingPayload(order, config.tpc);
+      const { payload, errors, warnings } = buildBookingPayload(order, config.tpc);
+      if (warnings.length) log.warn(`[booking] ${ref.name}: ${warnings.join(' ')}`);
       if (errors.length) {
         if (row) await updateRow(row.number, { status: 'failed', last_error: errors.join(' ') });
         log.warn(`[booking] ${ref.name} not bookable: ${errors.join(' | ')}`);
@@ -196,7 +197,7 @@ export function createBookingService({ pool, shopify, tpc, config, log = console
         log.info(`[dry-run] ${ref.name} would be booked with: ${JSON.stringify(payload)}`);
         await shopifySafely(`note dry run ${ref.name}`, async () => {
           await shopify.setMetafields(ref.gid, {
-            status: `Dry run OK: ${payload.weight} kg to ${payload.pincode}. ${payload.ship_adds1} / ${payload.ship_adds2} / ${payload.ship_adds3}`,
+            status: `Dry run OK: ${payload.weight} kg to ${payload.pincode}. ${warnings.join(' ')} ${payload.ship_adds1} / ${payload.ship_adds2} / ${payload.ship_adds3}`,
           });
           await shopify.addTags(ref.gid, [tags.dryRun]);
           await shopify.removeTags(ref.gid, [tags.failed]);

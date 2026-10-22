@@ -153,7 +153,7 @@ export function validatePayload(payload) {
 
 /**
  * Build TPC's booking form fields from a Shopify order (webhook / REST JSON shape).
- * Returns { payload, errors }. The consignment number is filled in separately so a
+ * Returns { payload, errors, warnings }. The consignment number is filled in separately so a
  * number is only spent once the order is known to be bookable.
  */
 export function buildBookingPayload(order, tpcConfig, consignmentNo = '') {
@@ -168,11 +168,17 @@ export function buildBookingPayload(order, tpcConfig, consignmentNo = '') {
   if (address.error) errors.push(address.error);
 
   const shippable = (order.line_items ?? []).filter((li) => li.requires_shipping !== false);
+  const warnings = [];
   const weightless = shippable.filter((li) => !Number(li.grams));
-  if (weightless.length) {
+  const defaultGrams = tpcConfig.defaultItemGrams || 0;
+  if (weightless.length && !defaultGrams) {
     errors.push(`These items have no weight set in Shopify: ${weightless.map((li) => li.title).join(', ')}.`);
+  } else if (weightless.length) {
+    warnings.push(`Default ${defaultGrams} g used for: ${weightless.map((li) => li.title).join(', ')}.`);
   }
-  const productGrams = Number(order.total_weight) || shippable.reduce((g, li) => g + Number(li.grams || 0) * (li.quantity || 1), 0);
+  const sumItems = () => shippable.reduce((g, li) => g + (Number(li.grams) || defaultGrams) * (li.quantity || 1), 0);
+  // Shopify's total_weight leaves out weightless items, so add up the items when any use the default.
+  const productGrams = weightless.length ? sumItems() : (Number(order.total_weight) || sumItems());
   const weightKg = (productGrams + tpcConfig.packagingGrams) / 1000;
 
   const value = Math.round(Number(order.current_subtotal_price ?? order.subtotal_price ?? order.total_price ?? 0));
@@ -198,5 +204,5 @@ export function buildBookingPayload(order, tpcConfig, consignmentNo = '') {
   const fieldErrors = validatePayload({ ...payload, consignmentno: payload.consignmentno || '00000' })
     // Address problems are already reported in plain words above.
     .filter((e) => !(address.error && e.startsWith('ship_adds')));
-  return { payload, errors: [...errors, ...fieldErrors] };
+  return { payload, errors: [...errors, ...fieldErrors], warnings };
 }

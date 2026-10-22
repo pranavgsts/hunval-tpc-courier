@@ -43,6 +43,27 @@ test('flags items with no weight instead of guessing', () => {
   assert.match(errors.join(' '), /no weight set in Shopify: Saree/);
 });
 
+test('uses the default weight for items with none, and says so', () => {
+  const order = makeOrder({
+    total_weight: 300, // Shopify's total leaves out the weightless saree
+    line_items: [
+      { title: 'Saree', grams: 0, quantity: 2, requires_shipping: true },
+      { title: 'Scarf', grams: 300, quantity: 1, requires_shipping: true },
+    ],
+  });
+  const { payload, errors, warnings } = buildBookingPayload(order, { ...tpc, defaultItemGrams: 500 });
+  assert.deepEqual(errors, []);
+  assert.equal(payload.weight, '1.400'); // 2 x 500 default + 300 + 100 packaging
+  assert.deepEqual(warnings, ['Default 500 g used for: Saree.']);
+});
+
+test('without a default weight, weightless items still block the booking', () => {
+  const order = makeOrder({ line_items: [{ title: 'Saree', grams: 0, quantity: 1, requires_shipping: true }] });
+  const { errors, warnings } = buildBookingPayload(order, { ...tpc, defaultItemGrams: 0 });
+  assert.match(errors.join(' '), /no weight set in Shopify: Saree/);
+  assert.deepEqual(warnings, []);
+});
+
 test('ignores digital items that do not ship', () => {
   const order = makeOrder({
     line_items: [

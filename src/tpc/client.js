@@ -25,7 +25,9 @@ export function createTpcClient({ apiUrl, apiKey, apiId, timeoutMs = 20_000 }) {
         const text = await response.text();
         try { body = JSON.parse(text); } catch { body = { raw: text.slice(0, 500) }; }
       } catch (error) {
-        return { outcome: 'unknown', message: `Could not reach TPC: ${error.message}` };
+        // "fetch failed" alone hides the reason; the cause has it (ENOTFOUND, ECONNREFUSED, ETIMEDOUT, ...).
+        const cause = error.cause?.code || error.cause?.message;
+        return { outcome: 'unknown', message: `Could not reach TPC: ${error.message}${cause ? ` (${cause})` : ''}` };
       }
 
       return classify(response.status, body);
